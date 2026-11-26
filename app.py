@@ -138,20 +138,52 @@ def _twelve(symbol: str, tf: str, api_key: str, months: int = 1) -> pd.DataFrame
 
 
 def _csv(file_bytes: bytes) -> pd.DataFrame:
-    df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine="python")
-    cols = {str(c).strip().lower(): c for c in df.columns}
-    tcol = next((cols[k] for k in ["time", "datetime", "date", "timestamp", "gmt time",
-                                   "local time", "date/time"] if k in cols), df.columns[0])
-    t = df[tcol]
+    """Read broker / Kaggle OHLC CSVs: with or without a header, single or separate date + time columns."""
+    raw = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine="python")
+    names = {str(c).strip().lower().strip("<>"): c for c in raw.columns}
+    if not all(k in names for k in ["open", "high", "low", "close"]):
+        # headerless export (MT4 style): name the columns by how many there are
+        raw = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine="python", header=None)
+        cols = {7: ["date", "time", "open", "high", "low", "close", "volume"],
+                6: ["datetime", "open", "high", "low", "close", "volume"],
+                5: ["datetime", "open", "high", "low", "close"]}.get(raw.shape[1])
+        if cols is None:
+            return pd.DataFrame()
+        raw.columns = cols
+        names = {c: c for c in cols}
+
+    if "date" in names and "time" in names and names["date"] != names["time"]:
+        t = raw[names["date"]].astype(str).str.strip() + " " + raw[names["time"]].astype(str).str.strip()
+    else:
+        tcol = next((names[k] for k in ["time", "datetime", "date", "timestamp", "gmt time",
+                                        "local time", "date/time"] if k in names), raw.columns[0])
+        t = raw[tcol]
     if pd.api.types.is_numeric_dtype(t):
         unit = "ms" if t.iloc[0] > 1e11 else "s"
         idx = pd.to_datetime(t, unit=unit, utc=True)
     else:
-        idx = pd.to_datetime(t, errors="coerce")
-    out = df.drop(columns=[tcol]).copy()
+        s = t.astype(str).str.strip()
+        dayfirst = bool(s.str.match(r"^\d{1,2}\.\d{1,2}\.\d{4}").mean() > 0.9)   # 05.01.2020 = 5 Jan
+        idx = pd.to_datetime(s, errors="coerce", dayfirst=dayfirst)
+    out = raw[[names["open"], names["high"], names["low"], names["close"]]].copy()
+    out.columns = ["open", "high", "low", "close"]
     out.index = idx
     out = out[out.index.notna()]
     return _finalize(out)
+
+
+def to_timeframe(df: pd.DataFrame, tf: str) -> pd.DataFrame:
+    """Convert finer candles (1m, 5m, 15m...) to the requested timeframe; refuse to invent finer candles."""
+    if df.empty:
+        return df
+    base = df.index.to_series().diff().dropna().median().total_seconds() / 60
+    target = TIMEFRAMES[tf]["mins"]
+    if base > target + 0.01:
+        raise ValueError(f"your CSV has {base:g}-minute candles, so {tf} cannot be built from it")
+    if base >= target - 0.01:
+        return df
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last"}
+    return df.resample(f"{target}min").agg(agg).dropna(subset=["open", "close"])
 
 
 def drop_unclosed(df: pd.DataFrame, tf: str) -> pd.DataFrame:
@@ -387,7 +419,8 @@ def main():
     tfs = sb.multiselect("Timeframes", list(TIMEFRAMES), default=list(TIMEFRAMES))
     csv_files = {}
     if source == "CSV upload":
-        sb.caption("Upload OHLC CSV (time, open, high, low, close) per instrument. Same file is used for every selected timeframe.")
+        sb.caption("Upload one OHLC CSV per instrument (Kaggle / MT4 / MT5 exports work, with or without header). "
+                   "Candles of 15m or finer are converted to the selected 15m / 30m automatically.")
         for name in INSTRUMENTS:
             f = sb.file_uploader(f"{name} CSV", type=["csv", "txt"], key=f"csv_{name}")
             if f is not None:
@@ -419,7 +452,7 @@ def main():
             else:
                 if inst not in csv_files:
                     return None, "Upload a CSV for this instrument"
-                df, live = _csv(csv_files[inst]), False
+                df, live = to_timeframe(_csv(csv_files[inst]), tf), False
         except Exception as e:  # noqa: BLE001
             return None, f"{type(e).__name__}: {e}"
         if df is None or df.empty:
@@ -461,6 +494,8 @@ def main():
         if source == "Yahoo Finance":
             st.caption("Yahoo gives only ~60 days of 15m/30m data. US500 uses ES=F futures and Gold uses GC=F "
                        "(futures prices differ slightly from CFD prices). Use Twelve Data or CSV for longer history.")
+        if source == "CSV upload":
+            st.caption("Scanner reads the last candle of your CSV, so it is only live if the file is up to date.")
         if auto:
             time.sleep(60)
             clear_live_cache()

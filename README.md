@@ -24,7 +24,10 @@ Streamlit app for **Gold** and **US500** on **15m** and **30m** only, **EMA 50/1
 - **Twelve Data**: months of intraday history. Set "Backtest history (months)" in the sidebar; the app pulls 5000-candle pages
   going back in time (free plan: 8 requests/min, so the first load of several months takes a few minutes, then it is cached for 6 hours).
   Add `TWELVE_DATA_KEY` in Streamlit secrets (never commit the key) or paste it in the sidebar. The scanner only fetches the latest candles.
-- **CSV upload**: export from your broker/StrategyTune (time, open, high, low, close) for the longest history.
+- **CSV upload**: one file per instrument, e.g. a Kaggle XAUUSD / S&P 500 dataset or a broker/StrategyTune export. Works with or
+  without a header, single datetime column or separate date + time columns (MT4/MT5), `dd.mm.yyyy` dates and unix timestamps.
+  Candles of 15m or finer are converted to the selected 15m / 30m automatically; a 30m file cannot be used for 15m.
+  Times are read as given (broker time is fine, there are no session rules in the logic).
 
 ## Backtest notes
 - Entry at breakout candle close (or next candle open — sidebar option).
