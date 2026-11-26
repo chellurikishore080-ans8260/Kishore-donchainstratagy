@@ -8,7 +8,7 @@ Rules:
   SHORT: bearish candle closes below previous 20-candle Donchian lower (entry candle excluded)
          + EMA50 < EMA100 + EMA100 falling
   SL   : breakout candle low (long) / high (short)
-  Risk : 0.5% of equity per trade, skip trade if SL distance > 1% of entry, one position at a time
+  Risk : 1% of equity per trade, skip trade if SL distance > 1% of entry, one position at a time
   TP   : full exit at 1:1.5 | 1:2 | 1:3
 
 Run:  streamlit run app.py
@@ -52,7 +52,7 @@ class Params:
     ema_fast: int = EMA_FAST
     ema_slow: int = EMA_SLOW
     slope_bars: int = SLOPE_BARS
-    risk_pct: float = 0.5
+    risk_pct: float = 1.0
     max_sl_pct: float = 1.0
     tp_mode: str = "1:2"
     entry_mode: str = "close"    # "close" = enter at breakout candle close, "next_open" = next candle open
@@ -343,7 +343,7 @@ def main():
                 csv_files[name] = f.getvalue()
 
     sb.markdown("---")
-    risk = sb.number_input("Risk per trade %", 0.05, 5.0, 0.5, 0.05)
+    risk = sb.number_input("Risk per trade %", 0.05, 5.0, 1.0, 0.05)
     max_sl = sb.number_input("Skip if SL distance > % of entry", 0.05, 10.0, 1.0, 0.05)
     entry_mode = sb.radio("Entry price", ["close", "next_open"],
                           format_func=lambda x: "Breakout candle close" if x == "close" else "Next candle open")

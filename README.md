@@ -12,7 +12,7 @@ Streamlit app for **Gold** and **US500** on **15m** and **30m** only, **EMA 50/1
 **SHORT** — mirror image (bearish candle closes below Donchian lower, EMA 50 < EMA 100, EMA 100 falling).
 
 **SL**: breakout candle low (long) / high (short)
-**Risk**: 0.5% per trade, skip the trade if SL distance > 1% of entry, one position at a time
+**Risk**: 1% per trade, skip the trade if SL distance > 1% of entry, one position at a time
 **TP**: full exit at **1:1.5**, **1:2** or **1:3** (no partials)
 
 ## Tabs
