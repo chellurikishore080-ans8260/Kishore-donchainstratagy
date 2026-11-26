@@ -94,20 +94,46 @@ def _yahoo(symbol: str, tf: str) -> pd.DataFrame:
     return _finalize(raw)
 
 
-def _twelve(symbol: str, tf: str, api_key: str) -> pd.DataFrame:
+_last_td_call = [0.0]
+
+
+def _td_throttle(min_gap: float = 7.5):
+    """Twelve Data free plan allows 8 requests/min, so keep requests ~7.5s apart."""
+    wait = min_gap - (time.time() - _last_td_call[0])
+    if wait > 0:
+        time.sleep(wait)
+    _last_td_call[0] = time.time()
+
+
+def _twelve(symbol: str, tf: str, api_key: str, months: int = 1) -> pd.DataFrame:
+    """Fetch history in 5000-candle pages, walking back from now until `months` are covered."""
     import requests
     cfg = TIMEFRAMES[tf]
-    r = requests.get(
-        "https://api.twelvedata.com/time_series",
-        params=dict(symbol=symbol, interval=cfg["twelve"], outputsize=5000,
-                    apikey=api_key, timezone="UTC", order="ASC"),
-        timeout=30,
-    )
-    j = r.json()
-    if "values" not in j:
-        raise RuntimeError(j.get("message", "Twelve Data returned no values"))
-    df = pd.DataFrame(j["values"]).set_index("datetime")
-    df.index = pd.to_datetime(df.index)
+    target = pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=months)
+    frames, end, retries = [], None, 0
+    for _ in range(60):
+        params = dict(symbol=symbol, interval=cfg["twelve"], outputsize=5000,
+                      apikey=api_key, timezone="UTC", order="DESC")
+        if end:
+            params["end_date"] = end
+        _td_throttle()
+        j = requests.get("https://api.twelvedata.com/time_series", params=params, timeout=30).json()
+        if "values" not in j:
+            if j.get("code") == 429 and retries < 3:       # per-minute limit hit: wait and retry
+                retries += 1
+                time.sleep(60)
+                continue
+            if frames:                                      # no older data available: keep what we have
+                break
+            raise RuntimeError(j.get("message", "Twelve Data returned no values"))
+        page = pd.DataFrame(j["values"])
+        page["datetime"] = pd.to_datetime(page["datetime"])
+        frames.append(page)
+        oldest = page["datetime"].min()
+        if len(page) < 5000 or oldest.tz_localize("UTC") <= target:
+            break
+        end = (oldest - pd.Timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
+    df = pd.concat(frames).drop_duplicates("datetime").set_index("datetime").sort_index()
     return _finalize(df)
 
 
@@ -144,10 +170,23 @@ if st is not None:
         return _yahoo(symbol, tf)
 
     @st.cache_data(ttl=300, show_spinner=False)
-    def load_twelve(symbol, tf, api_key):
-        return _twelve(symbol, tf, api_key)
+    def load_twelve_recent(symbol, tf, api_key):          # scanner: latest ~5000 candles, refreshed often
+        return _twelve(symbol, tf, api_key, 1)
+
+    @st.cache_data(ttl=21600, show_spinner=False)
+    def load_twelve_hist(symbol, tf, api_key, months):    # backtest: months of history, cached 6 hours
+        return _twelve(symbol, tf, api_key, months)
+
+    def clear_live_cache():
+        load_yahoo.clear()
+        load_twelve_recent.clear()
 else:  # pragma: no cover
-    load_yahoo, load_twelve = _yahoo, _twelve
+    load_yahoo = _yahoo
+    load_twelve_recent = lambda s, t, k: _twelve(s, t, k, 1)          # noqa: E731
+    load_twelve_hist = lambda s, t, k, m: _twelve(s, t, k, m)         # noqa: E731
+
+    def clear_live_cache():
+        pass
 
 
 # ----------------------------------------------------------------------------------------------
@@ -319,6 +358,14 @@ def make_chart(d: pd.DataFrame, trades: pd.DataFrame, bars: int = 400):
     return fig
 
 
+def _secret(name: str) -> str:
+    """Read a Streamlit secret; returns "" when no secrets file is configured."""
+    try:
+        return str(st.secrets.get(name, ""))
+    except Exception:  # noqa: BLE001  (StreamlitSecretNotFoundError when secrets.toml is missing)
+        return ""
+
+
 def main():
     st.set_page_config(page_title="Donchian Scanner + Backtest", layout="wide")
     st.title("Donchian Breakout — Scanner + Backtest")
@@ -330,7 +377,12 @@ def main():
     api_key = ""
     if source == "Twelve Data":
         api_key = sb.text_input("Twelve Data API key", type="password",
-                                value=st.secrets.get("TWELVE_DATA_KEY", "") if hasattr(st, "secrets") else "")
+                                value=_secret("TWELVE_DATA_KEY"))
+    months = 2
+    if source == "Twelve Data":
+        months = int(sb.number_input("Backtest history (months)", 1, 24, 6))
+        sb.caption("Free plan allows 8 requests/min, so long history loads slowly the first time "
+                   "(about 8s per 5000 candles), then it is cached for 6 hours.")
     insts = sb.multiselect("Instruments", list(INSTRUMENTS), default=list(INSTRUMENTS))
     tfs = sb.multiselect("Timeframes", list(TIMEFRAMES), default=list(TIMEFRAMES))
     csv_files = {}
@@ -354,14 +406,16 @@ def main():
                   cost_pct=float(cost), capital=float(capital),
                   allow_long=direction != "Short only", allow_short=direction != "Long only")
 
-    def get(inst, tf):
+    def get(inst, tf, hist=False):
         try:
             if source == "Yahoo Finance":
                 df, live = load_yahoo(INSTRUMENTS[inst]["yahoo"], tf), True
             elif source == "Twelve Data":
                 if not api_key:
                     return None, "Enter Twelve Data API key in the sidebar"
-                df, live = load_twelve(INSTRUMENTS[inst]["twelve"], tf, api_key), True
+                sym = INSTRUMENTS[inst]["twelve"]
+                df = load_twelve_hist(sym, tf, api_key, months) if hist else load_twelve_recent(sym, tf, api_key)
+                live = True
             else:
                 if inst not in csv_files:
                     return None, "Upload a CSV for this instrument"
@@ -384,7 +438,7 @@ def main():
         lookback = c1.number_input("Show signals from last N candles", 1, 20, 3)
         auto = c2.checkbox("Auto-refresh (60s)")
         if c3.button("Refresh now"):
-            st.cache_data.clear()
+            clear_live_cache()
         rows, errs = [], []
         for inst in insts:
             for tf in tfs:
@@ -409,7 +463,7 @@ def main():
                        "(futures prices differ slightly from CFD prices). Use Twelve Data or CSV for longer history.")
         if auto:
             time.sleep(60)
-            st.cache_data.clear()
+            clear_live_cache()
             st.rerun()
 
     # ---------------- backtest ----------------
@@ -417,18 +471,22 @@ def main():
         if not insts or not tfs:
             st.info("Pick instruments and timeframes in the sidebar.")
         else:
+            if source == "Yahoo Finance":
+                st.info("Yahoo only provides the last ~60 days of 15m/30m data. "
+                        "Pick Twelve Data (set history in months) or upload a CSV for a longer backtest.")
             data, summary = {}, []
-            for inst in insts:
-                for tf in tfs:
-                    df, err = get(inst, tf)
-                    if err:
-                        st.warning(f"{inst} {tf}: {err}")
-                        continue
-                    data[(inst, tf)] = df
-                    for m in TP_RR:
-                        pp = replace(base, tp_mode=m)
-                        tr, _, sk = backtest(df, pp)
-                        summary.append(dict(Instrument=inst, TF=tf, TP=m, **summarize(tr, pp, sk)))
+            with st.spinner("Loading history… first load of several months can take a few minutes on the free plan."):
+                for inst in insts:
+                    for tf in tfs:
+                        df, err = get(inst, tf, hist=True)
+                        if err:
+                            st.warning(f"{inst} {tf}: {err}")
+                            continue
+                        data[(inst, tf)] = df
+                        for m in TP_RR:
+                            pp = replace(base, tp_mode=m)
+                            tr, _, sk = backtest(df, pp)
+                            summary.append(dict(Instrument=inst, TF=tf, TP=m, **summarize(tr, pp, sk)))
             if summary:
                 st.subheader("Summary — all instruments × timeframes × TP")
                 sm = pd.DataFrame(summary)

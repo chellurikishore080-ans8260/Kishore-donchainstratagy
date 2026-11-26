@@ -21,7 +21,9 @@ Streamlit app for **Gold** and **US500** on **15m** and **30m** only, **EMA 50/1
 
 ## Data sources
 - **Yahoo Finance** (default): Gold `GC=F`, US500 `ES=F`. Only ~60 days of 15m/30m history.
-- **Twelve Data**: longer intraday history (API key; add `TWELVE_DATA_KEY` in Streamlit secrets or paste in the sidebar).
+- **Twelve Data**: months of intraday history. Set "Backtest history (months)" in the sidebar; the app pulls 5000-candle pages
+  going back in time (free plan: 8 requests/min, so the first load of several months takes a few minutes, then it is cached for 6 hours).
+  Add `TWELVE_DATA_KEY` in Streamlit secrets (never commit the key) or paste it in the sidebar. The scanner only fetches the latest candles.
 - **CSV upload**: export from your broker/StrategyTune (time, open, high, low, close) for the longest history.
 
 ## Backtest notes
