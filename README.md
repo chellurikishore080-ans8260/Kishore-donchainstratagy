@@ -13,10 +13,10 @@ Streamlit app for **Gold** and **US500** on **15m** and **30m** only, **EMA 50/1
 
 **SL**: breakout candle low (long) / high (short)
 **Risk**: 1% per trade, skip the trade if SL distance > 1% of entry, one position at a time
-**TP**: full exit at **1:1.5**, **1:2** or **1:3** (no partials)
+**TP**: full exit at **1:2** or **1:3** (no partials)
 
 ## Tabs
-- **Scanner** — latest signal on each instrument/timeframe (entry, SL, SL %, TP 1:1.5 / 1:2 / 1:3, VALID / SKIP).
+- **Scanner** — latest signal on each instrument/timeframe (entry, SL, SL %, TP 1:2 / 1:3, VALID / SKIP).
 - **Backtest** — summary of Gold/US500 × 15m/30m × 3 TP ratios, then detail with equity curve, chart and trades CSV.
 
 ## Data sources

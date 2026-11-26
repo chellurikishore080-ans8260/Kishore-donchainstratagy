@@ -1,6 +1,6 @@
 """
 Donchian Breakout Scanner + Backtester
-Instruments: Gold, US500  |  Timeframes: 15m, 30m  |  EMA 50/100  |  TP: 1:1.5, 1:2, 1:3
+Instruments: Gold, US500  |  Timeframes: 15m, 30m  |  EMA 50/100  |  TP: 1:2, 1:3
 
 Rules:
   LONG : bullish candle closes above previous 20-candle Donchian upper (entry candle excluded)
@@ -9,7 +9,7 @@ Rules:
          + EMA50 < EMA100 + EMA100 falling
   SL   : breakout candle low (long) / high (short)
   Risk : 1% of equity per trade, skip trade if SL distance > 1% of entry, one position at a time
-  TP   : full exit at 1:1.5 | 1:2 | 1:3
+  TP   : full exit at 1:2 | 1:3
 
 Run:  streamlit run app.py
 """
@@ -39,7 +39,7 @@ TIMEFRAMES = {
 }
 
 # Take-profit as reward:risk, full exit
-TP_RR = {"1:1.5": 1.5, "1:2": 2.0, "1:3": 3.0}
+TP_RR = {"1:2": 2.0, "1:3": 3.0}
 
 EMA_FAST, EMA_SLOW, DON_LEN, SLOPE_BARS = 50, 100, 20, 1   # fixed logic
 
@@ -291,7 +291,6 @@ def scan_one(df: pd.DataFrame, p: Params, lookback: int = 3) -> dict:
         Signal="LONG" if side == 1 else "SHORT",
         **{"Signal candle": d.index[i].strftime("%d-%b %H:%M"), "Bars ago": int(n - 1 - i),
            "Entry": round(float(entry), 3), "SL": round(float(sl), 3), "SL %": round(float(sl_pct), 3),
-           "TP 1:1.5": round(float(entry + side * risk * 1.5), 3),
            "TP 1:2": round(float(entry + side * risk * 2), 3),
            "TP 1:3": round(float(entry + side * risk * 3), 3),
            "Status": "VALID" if valid else f"SKIP (SL>{p.max_sl_pct}%)"})
@@ -323,7 +322,7 @@ def make_chart(d: pd.DataFrame, trades: pd.DataFrame, bars: int = 400):
 def main():
     st.set_page_config(page_title="Donchian Scanner + Backtest", layout="wide")
     st.title("Donchian Breakout — Scanner + Backtest")
-    st.caption("Gold & US500  |  15m & 30m  |  EMA 50/100  |  TP 1:1.5 / 1:2 / 1:3")
+    st.caption("Gold & US500  |  15m & 30m  |  EMA 50/100  |  TP 1:2 / 1:3")
 
     # ---------------- sidebar ----------------
     sb = st.sidebar
@@ -442,7 +441,7 @@ def main():
                 b1, b2, b3 = st.columns(3)
                 inst = b1.selectbox("Instrument", sorted({k[0] for k in avail}), key="bt_inst")
                 tf = b2.selectbox("Timeframe", [k[1] for k in avail if k[0] == inst], key="bt_tf")
-                mode = b3.selectbox("TP", list(TP_RR), index=1, key="bt_tp")
+                mode = b3.selectbox("TP", list(TP_RR), index=0, key="bt_tp")
                 df = data[(inst, tf)]
                 st.caption(f"{len(df)} candles  |  {df.index[0]:%d-%b-%Y %H:%M} → {df.index[-1]:%d-%b-%Y %H:%M} IST")
                 pp = replace(base, tp_mode=mode)
@@ -468,7 +467,7 @@ EMA {base.ema_fast} < EMA {base.ema_slow}, EMA {base.ema_slow} falling.
 
 **SL** — breakout candle low (long) / high (short). **Risk** {base.risk_pct}% per trade, skip if SL > {base.max_sl_pct}% of entry, one position at a time.
 
-**TP** — full exit at 1:1.5, 1:2 or 1:3.
+**TP** — full exit at 1:2 or 1:3.
 
 Backtest notes: if SL and TP are both inside one candle, SL is assumed first. Position size = risk % of current equity ÷ SL distance,
 so results are in R and equity compounds. Cost input is subtracted from every trade in R.
