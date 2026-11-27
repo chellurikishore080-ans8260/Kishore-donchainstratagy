@@ -20,6 +20,8 @@ from dataclasses import dataclass, replace
 import numpy as np
 import pandas as pd
 
+import dukascopy as duka
+
 try:
     import streamlit as st
 except ImportError:  # lets the engine be imported/tested without streamlit
@@ -29,8 +31,8 @@ except ImportError:  # lets the engine be imported/tested without streamlit
 # Config
 # ----------------------------------------------------------------------------------------------
 INSTRUMENTS = {
-    "Gold (XAUUSD)": {"yahoo": "GC=F", "twelve": "XAU/USD"},
-    "US500": {"yahoo": "ES=F", "twelve": "SPX"},
+    "Gold (XAUUSD)": {"yahoo": "GC=F", "twelve": "XAU/USD", "dukascopy": "XAUUSD"},
+    "US500": {"yahoo": "ES=F", "twelve": "SPX", "dukascopy": "USA500IDXUSD"},
 }
 
 TIMEFRAMES = {
@@ -137,6 +139,11 @@ def _twelve(symbol: str, tf: str, api_key: str, months: int = 1) -> pd.DataFrame
     return _finalize(df)
 
 
+def _dukascopy(symbol: str, tf: str, months: int) -> pd.DataFrame:
+    """15m / 30m candles from the Dukascopy cache (data/*.csv); downloads only the missing days."""
+    return _finalize(duka.refresh(symbol, months)[tf])
+
+
 def _csv(file_bytes: bytes) -> pd.DataFrame:
     """Read broker / Kaggle OHLC CSVs: with or without a header, single or separate date + time columns."""
     raw = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine="python")
@@ -209,13 +216,19 @@ if st is not None:
     def load_twelve_hist(symbol, tf, api_key, months):    # backtest: months of history, cached 6 hours
         return _twelve(symbol, tf, api_key, months)
 
+    @st.cache_data(ttl=900, show_spinner=False)
+    def load_dukascopy(symbol, tf, months):               # reads data/*.csv, fetches only missing days
+        return _dukascopy(symbol, tf, months)
+
     def clear_live_cache():
         load_yahoo.clear()
         load_twelve_recent.clear()
+        load_dukascopy.clear()
 else:  # pragma: no cover
     load_yahoo = _yahoo
     load_twelve_recent = lambda s, t, k: _twelve(s, t, k, 1)          # noqa: E731
     load_twelve_hist = lambda s, t, k, m: _twelve(s, t, k, m)         # noqa: E731
+    load_dukascopy = _dukascopy
 
     def clear_live_cache():
         pass
@@ -405,7 +418,7 @@ def main():
 
     # ---------------- sidebar ----------------
     sb = st.sidebar
-    source = sb.selectbox("Data source", ["Yahoo Finance", "Twelve Data", "CSV upload"])
+    source = sb.selectbox("Data source", ["Dukascopy (years, free)", "Yahoo Finance", "Twelve Data", "CSV upload"])
     api_key = ""
     if source == "Twelve Data":
         api_key = sb.text_input("Twelve Data API key", type="password",
@@ -415,6 +428,10 @@ def main():
         months = int(sb.number_input("Backtest history (months)", 1, 24, 6))
         sb.caption("Free plan allows 8 requests/min, so long history loads slowly the first time "
                    "(about 8s per 5000 candles), then it is cached for 6 hours.")
+    elif source.startswith("Dukascopy"):
+        months = int(sb.number_input("Backtest history (months)", 1, 60, 24))
+        sb.caption("1-minute data from Dukascopy, converted to 15m and 30m. Saved in the repo's data/ folder; "
+                   "only missing days are downloaded. The very first download of 2+ years takes a few minutes.")
     insts = sb.multiselect("Instruments", list(INSTRUMENTS), default=list(INSTRUMENTS))
     tfs = sb.multiselect("Timeframes", list(TIMEFRAMES), default=list(TIMEFRAMES))
     csv_files = {}
@@ -441,7 +458,9 @@ def main():
 
     def get(inst, tf, hist=False):
         try:
-            if source == "Yahoo Finance":
+            if source.startswith("Dukascopy"):
+                df, live = load_dukascopy(INSTRUMENTS[inst]["dukascopy"], tf, months if hist else 1), True
+            elif source == "Yahoo Finance":
                 df, live = load_yahoo(INSTRUMENTS[inst]["yahoo"], tf), True
             elif source == "Twelve Data":
                 if not api_key:
@@ -494,6 +513,9 @@ def main():
         if source == "Yahoo Finance":
             st.caption("Yahoo gives only ~60 days of 15m/30m data. US500 uses ES=F futures and Gold uses GC=F "
                        "(futures prices differ slightly from CFD prices). Use Twelve Data or CSV for longer history.")
+        if source.startswith("Dukascopy"):
+            st.caption("Dukascopy is best for backtests. Its current-day file can lag the live market by some minutes, "
+                       "so for live entries cross-check the scanner on Yahoo Finance or your broker chart.")
         if source == "CSV upload":
             st.caption("Scanner reads the last candle of your CSV, so it is only live if the file is up to date.")
         if auto:
@@ -508,7 +530,7 @@ def main():
         else:
             if source == "Yahoo Finance":
                 st.info("Yahoo only provides the last ~60 days of 15m/30m data. "
-                        "Pick Twelve Data (set history in months) or upload a CSV for a longer backtest.")
+                        "Pick Dukascopy (years of free data), Twelve Data or a CSV for a longer backtest.")
             data, summary = {}, []
             with st.spinner("Loading history… first load of several months can take a few minutes on the free plan."):
                 for inst in insts:

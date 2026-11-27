@@ -1,0 +1,40 @@
+name: Update Dukascopy data
+
+# Run it by hand: GitHub -> Actions -> "Update Dukascopy data" -> Run workflow.
+# It downloads Gold + US500 1-minute data from Dukascopy, builds 15m and 30m candles
+# and commits them to data/ so the Streamlit app starts with years of history already in the repo.
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: "Months of history to keep"
+        default: "36"
+  schedule:
+    - cron: "30 1 * * 1"   # every Monday 01:30 UTC (07:00 IST)
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pandas numpy requests
+      - name: Download and build 15m / 30m candles
+        run: python dukascopy.py --months "${{ github.event.inputs.months || '36' }}"
+      - name: Commit data
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "No new data"
+          else
+            git commit -m "Update Dukascopy 15m/30m data"
+            git push
+          fi

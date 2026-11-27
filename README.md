@@ -20,7 +20,12 @@ Streamlit app for **Gold** and **US500** on **15m** and **30m** only, **EMA 50/1
 - **Backtest** — summary of Gold/US500 × 15m/30m × 3 TP ratios, then detail with equity curve, chart and trades CSV.
 
 ## Data sources
-- **Yahoo Finance** (default): Gold `GC=F`, US500 `ES=F`. Only ~60 days of 15m/30m history.
+- **Dukascopy** (default, free, years of history): Gold `XAUUSD`, US500 `USA500IDXUSD`. 1-minute bid candles are downloaded
+  by `dukascopy.py` and converted to **15m and 30m**, saved as `data/<SYMBOL>_15m.csv` and `data/<SYMBOL>_30m.csv` (UTC).
+  Later runs only download the missing days. Pick "Backtest history (months)" in the sidebar (1-60).
+  To fill the repo with data without any PC: GitHub -> Actions -> **Update Dukascopy data** -> Run workflow (default 36 months).
+  Or run `python dukascopy.py --months 36` anywhere. The data is a CFD feed, so prices differ slightly from futures.
+- **Yahoo Finance**: Gold `GC=F`, US500 `ES=F`. Only ~60 days of 15m/30m history.
 - **Twelve Data**: months of intraday history. Set "Backtest history (months)" in the sidebar; the app pulls 5000-candle pages
   going back in time (free plan: 8 requests/min, so the first load of several months takes a few minutes, then it is cached for 6 hours).
   Add `TWELVE_DATA_KEY` in Streamlit secrets (never commit the key) or paste it in the sidebar. The scanner only fetches the latest candles.
